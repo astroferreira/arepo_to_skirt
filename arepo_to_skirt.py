@@ -7,6 +7,8 @@ import json as j
 import numpy as np
 import pandas as pd
 
+from orientation import *
+
 from matplotlib import pyplot as plt
 from astropy import units as u
 from astropy import constants as const
@@ -55,7 +57,7 @@ def resample(all_df):
         subparticle_masses *= try_mass
 
         n_resampled = len(subparticle_masses)
-        print(n_resampled)
+        #print(n_resampled)
         min_formation_time = subparticle_masses / young_stars.iloc[i].SFR
         formation_time = np.random.uniform(1, (100*u.Myr).to(u.yr).value, size=len(min_formation_time))        
         #inheret position, smoothing length from parent particle
@@ -66,13 +68,13 @@ def resample(all_df):
         hi = np.zeros(n_resampled) + young_stars.iloc[i].h
         Zi = np.zeros(n_resampled) + young_stars.iloc[i].Z
         P = np.zeros(n_resampled)  + young_stars.iloc[i].P
-        SFRi = 10**(-7) * subparticle_masses        
+        SFRi = 10**(-8) * subparticle_masses        
         logC = 3/5 * np.log10((subparticle_masses*u.solMass).to(u.kg) / const.M_sun) + 2/5 * np.log10(P*u.Pa / const.k_B / (u.cm**-3 * u.K))
         fc = np.zeros_like(formation_time) + 0.2
 
         #this is the size of the HII region, its smoothing scale
         rhII = np.cbrt(8*subparticle_masses*10/(np.pi*young_stars.iloc[i].density))
-
+        #print(rhII,young_stars.iloc[i].density)
         #this is the radius of the sphere where the positions are to be sampled around the parent position
         hi2 = np.sqrt(hi**2 - rhII**2)
 
@@ -117,84 +119,6 @@ def rndm(a, b, g, size=1):
     
     return scale_free_distribution
 
-def rotationMatricesFromInertiaTensor(I):
-    """ Calculate 3x3 rotation matrix by a diagonalization of the moment of inertia tensor.
-    Note the resultant rotation matrices are hard-coded for projection with axes=[0,1] e.g. along z. """
-
-    # get eigen values and normalized right eigenvectors
-    eigen_values, rotation_matrix = np.linalg.eig(I)
-
-    # sort ascending the eigen values
-    sort_inds = np.argsort(eigen_values)
-    eigen_values = eigen_values[sort_inds]
-
-    # permute the eigenvectors into this order, which is the rotation matrix which orients the
-    # principal axes to the cartesian x,y,z axes, such that if axes=[0,1] we have face-on
-    new_matrix = np.matrix( (rotation_matrix[:,sort_inds[0]],
-                             rotation_matrix[:,sort_inds[1]],
-                             rotation_matrix[:,sort_inds[2]]) )
-
-    # make a random edge on view
-    phi = np.random.uniform(0, 2*np.pi)
-    theta = np.pi / 2
-    psi = 0
-
-    A_00 =  np.cos(psi)*np.cos(phi) - np.cos(theta)*np.sin(phi)*np.sin(psi)
-    A_01 =  np.cos(psi)*np.sin(phi) + np.cos(theta)*np.cos(phi)*np.sin(psi)
-    A_02 =  np.sin(psi)*np.sin(theta)
-    A_10 = -np.sin(psi)*np.cos(phi) - np.cos(theta)*np.sin(phi)*np.cos(psi)
-    A_11 = -np.sin(psi)*np.sin(phi) + np.cos(theta)*np.cos(phi)*np.cos(psi)
-    A_12 =  np.cos(psi)*np.sin(theta)
-    A_20 =  np.sin(theta)*np.sin(phi)
-    A_21 = -np.sin(theta)*np.cos(phi)
-    A_22 =  np.cos(theta)
-
-    random_edgeon_matrix = np.matrix( ((A_00, A_01, A_02), (A_10, A_11, A_12), (A_20, A_21, A_22)) )
-
-    # prepare return with a few other useful versions of this rotation matrix
-    r = {}
-    r['face-on'] = new_matrix
-    r['edge-on'] = np.matrix( ((1,0,0),(0,0,1),(0,-1,0)) ) * r['face-on'] # disk along x-hat
-    r['edge-on-smallest'] = np.matrix( ((0,1,0),(0,0,1),(1,0,0)) ) * r['face-on']
-    r['edge-on-y'] = np.matrix( ((0,0,1),(1,0,0),(0,-1,0)) ) * r['face-on'] # disk along y-hat
-    r['edge-on-random'] = random_edgeon_matrix * r['face-on']
-    r['phi'] = phi
-    r['identity'] = np.matrix( np.identity(3) )
-
-    return r
-
-def periodic_distance(subhalo_position, particle_coordinates):
-
-    L = 302600
-    
-    dist = particle_coordinates - shPos
-    print(dist)
-    
-    idx = np.where(abs(dist) > L/2)
-    
-    if(len(idx[0]) == 0):
-        
-        r = np.sqrt(dist[:,0]**2 + dist[:,1]**2 + dist[:,2]**2)
-        
-        return r
-    
-    dist = correct_periodic_distances(dist)
-                
-    return np.sqrt(dist[0]**2 + dist[1]**2 + dist[2]**2)
-
-def correct_periodic_distances(distances):
-    
-    L = 302600
-    
-    for i, particle in enumerate(distances):
-        for j, di in enumerate(particle):
-            if(di>L/2):
-                distances[i][j] = di - L
-
-            if(di<-L/2):
-                distances[i][j] = di + L
-
-    return distances
 
 def get(path, filename=None, params=None):
     # make HTTP GET request to path
@@ -224,36 +148,6 @@ def verify_if_already_downloaded(name):
 
     return cutout & json & stars & starbursting & dust
 
-def find_faceon_rotation(gas, shPos, rHalf):
-    rad_gas = periodic_distance(shPos, gas['Coordinates'][:] * a / cosmo.h)
-    wGas = np.where((rad_gas <= 2.0*rHalf) & (gas['StarFormationRate'][:] > 0.0) )[0]
-
-    masses = gas['Masses'][:][wGas] / cosmo.h
-    xyz = gas['Coordinates'][:][wGas,:] * a / cosmo.h
-    xyz = np.squeeze(xyz)
-
-    if xyz.ndim == 1:
-        xyz = np.reshape( xyz, (1,3) )
-
-    for i in range(3):
-        xyz[:,i] -= shPos[i]
-
-    xyz = correct_periodic_distances(xyz)
-
-    I = np.zeros( (3,3), dtype='float32' )
-
-    I[0,0] = np.sum( masses * (xyz[:,1]*xyz[:,1] + xyz[:,2]*xyz[:,2]) )
-    I[1,1] = np.sum( masses * (xyz[:,0]*xyz[:,0] + xyz[:,2]*xyz[:,2]) )
-    I[2,2] = np.sum( masses * (xyz[:,0]*xyz[:,0] + xyz[:,1]*xyz[:,1]) )
-    I[0,1] = -1 * np.sum( masses * (xyz[:,0]*xyz[:,1]) )
-    I[0,2] = -1 * np.sum( masses * (xyz[:,0]*xyz[:,2]) )
-    I[1,2] = -1 * np.sum( masses * (xyz[:,1]*xyz[:,2]) )
-    I[1,0] = I[0,1]
-    I[2,0] = I[0,2]
-    I[2,1] = I[1,2]
-
-    rotation = rotationMatricesFromInertiaTensor(I)['face-on']
-    return rotation
 
 def io(name):
 
@@ -277,13 +171,13 @@ def io(name):
 
     return halo, json, rHalf, shPos
 
-def smoothing_length(x, y, z, Nk=64):
+def smoothing_length(x, y, z, Nk=32):
     X = np.vstack([x, y, z]).T
     tree = KDTree(X, leaf_size=2)
     dist, ind = tree.query(X, k=Nk) 
     return dist[:,-1]
 
-def load_particles(stellar, gas, shPos, snap, resampling=True):
+def load_particles(stellar, gas, shPos, snap, resampling=False):
 
     def load_stellar(stellar, shPos, snap):
 
@@ -297,7 +191,7 @@ def load_particles(stellar, gas, shPos, snap, resampling=True):
         y = np.squeeze(np.array(coords.T[1], np.float))
         z = np.squeeze(np.array(coords.T[2], np.float))
 
-        h = smoothing_length(x, y, z, Nk=128)
+        h = smoothing_length(x, y, z)
 
         mass = 10**10 * stellar['GFM_InitialMass'][:][stars] / cosmo.h
         metalicity = stellar['GFM_Metallicity'][:][stars]
@@ -313,6 +207,8 @@ def load_particles(stellar, gas, shPos, snap, resampling=True):
 
         H_abundance = stellar['GFM_Metals'][:][stars][:, 0]
         rho = stellar['SubfindDensity'][:][stars] * (10**10 * u.solMass) * cosmo.h**2 / ((a*u.kpc)**3)
+        rho = rho.to(u.solMass / u.pc**3)
+        print(rho)
         nH = (H_abundance * rho.to(u.kg/u.cm**3) / const.m_p) # neutral hydrogen number density
         
         #normalization for polytropic pressure
@@ -339,7 +235,7 @@ def load_particles(stellar, gas, shPos, snap, resampling=True):
         x = np.squeeze(np.array(coords.T[0], np.float))
         y = np.squeeze(np.array(coords.T[1], np.float))
         z = np.squeeze(np.array(coords.T[2], np.float))
-        h = smoothing_length(x, y, z, Nk=64)
+        h = smoothing_length(x, y, z)
         mass = gas['Masses'][:] * (10**10 * u.solMass) / cosmo.h
         metalicity = gas['GFM_Metallicity'][:]
         ages = np.zeros_like(metalicity) + 1 # age is not used for gas particles
@@ -368,9 +264,7 @@ def load_particles(stellar, gas, shPos, snap, resampling=True):
 
     df_all = pd.concat([df_stellar, df_gas])
 
-    print(df_all)
-
-    within_fov = np.where((abs(df_all.x) < FOV*1000/2) & (abs(df_all.y) <  FOV*1000/2))
+    within_fov = np.where((abs(df_all.x) < FOV*1000/2) & (abs(df_all.y) <  FOV*1000/2) & (abs(df_all.z) <  FOV*1000/2))
 
     df_all = df_all.iloc[within_fov]
     
@@ -418,9 +312,10 @@ def load_dusty_ism(gas, mappings_df, dust_ism_df, shPos):
 
     print(ghost_particles)
     if len(dust_ism_df) > 0:
-        return pd.concat([df_dust, ghost_particles, dust_ism_df[['x', 'y', 'z', 'h', 'mass', 'Z']]])
+        return pd.concat([df_dust, dust_ism_df[['x', 'y', 'z', 'h', 'mass', 'Z']]])
     else:
         return df_dust
+
 
 def estimate_sfr_gas_fraction(gas, json):
 
@@ -487,10 +382,10 @@ if __name__ == '__main__':
     Find the rotation matrix that translated the x, y plane to faceon view.
     If it is not possible to estimate it, return the identity matrix.
     """
-    try:
-        rotation = find_faceon_rotation(gas, shPos, rHalf)
-    except:
-        rotation = np.identity(3)
+    #try:
+    rotation = find_faceon_rotation(gas, stellar, shPos, rHalf, a)
+    #except:
+    rotation = np.identity(3)
 
     galaxev_df, mappings_df, dust_ism_df = load_particles(stellar, gas, shPos, snap)
  
@@ -503,6 +398,8 @@ if __name__ == '__main__':
 
     #print(estimate_sfr_gas_fraction(gas, json))
 
-    n_photons, n_pixels, pixel_scale, pc_per_pix = calculate_frame(FOV, 0.03, 0.5)
+    n_photons, n_pixels, pixel_scale, pc_per_pix = calculate_frame(FOV, 0.03, 0.1)
     output_ski(name, n_photons, FOV, n_pixels)
+
+    print(f'Old stars: {galaxev_df.shape[0]}, Young Stars: {mappings_df.shape[0]}, Dust Particles: {df_dust.iloc[np.where(df_dust.mass > 0)].shape[0]}')
 
